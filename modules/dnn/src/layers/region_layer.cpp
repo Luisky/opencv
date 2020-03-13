@@ -224,14 +224,16 @@ public:
 
         std::vector<Mat> inputs, outputs, internals;
         inputs_arr.getMatVector(inputs);
-        outputs_arr.getMatVector(outputs);
+        outputs_arr.getMatVector(outputs);        
         internals_arr.getMatVector(internals);
 
         CV_Assert(inputs.size() >= 1);
         CV_Assert(outputs.size() == 1);
         int const cell_size = classes + coords + 1;
 
-        const float* biasData = blobs[0].ptr<float>();
+        std::cout << "CRASH 1 ?" << std::endl;
+        const float* biasData = blobs[0].ptr<float>(); // TODO: fix crash here
+        std::cout << "CRASH 2 ?" << std::endl;
 
         for (size_t ii = 0; ii < outputs.size(); ii++)
         {

@@ -307,7 +307,7 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
-        CV_Assert(blobs.size() != 0);
+        CV_Assert(blobs.size() != 0); //TODO : modify this
         CV_Assert(!hasBias() || blobs[1].total() == (size_t)blobs[0].size[0]);
         CV_Assert(inputs.size() == (size_t)1);
 
@@ -316,7 +316,7 @@ public:
         CV_Assert(inputs.size() != 0);
         std::vector<int> inpShape(inputs[0].begin() + 2, inputs[0].end());
 
-        int outCn = blobs[0].size[0];
+        int outCn = blobs[0].size[0]; // weight_blob : 'filters' value
         std::vector<int> outShape;
         outShape.push_back(inputs[0][0]);
         outShape.push_back(outCn);
@@ -332,7 +332,7 @@ public:
             getConvPoolOutParams(inpShape, kernel_size, strides, padMode, dilations, outShape);
         }
 
-        int ngroups = inpCn / blobs[0].size[1];
+        int ngroups = inpCn / blobs[0].size[1]; // weight_blob : current_channels
         if (ngroups == 0 || ngroups * blobs[0].size[1] != inpCn)
             CV_Error(Error::StsError, format("Number of input channels should "
                      "be multiple of %d but got %d", blobs[0].size[1], inpCn));
@@ -1612,7 +1612,7 @@ public:
                          std::vector<MatShape> &outputs,
                          std::vector<MatShape> &internals) const CV_OVERRIDE
     {
-        CV_Assert(!hasBias() || blobs[1].total() == (size_t)numOutput);
+        CV_Assert(!hasBias() || blobs[1].total() == (size_t)numOutput); // 'filters' value from weights
         CV_Assert(inputs.size() != 0);
 
         int outCn = numOutput;
@@ -1637,12 +1637,12 @@ public:
         else
             CV_Error(Error::StsError, "Unsupported padding mode " + padMode);
 
-        CV_Assert(outCn % blobs[0].size[1] == 0);
-        int ngroups = outCn / blobs[0].size[1];
+        CV_Assert(outCn % blobs[0].size[1] == 0); // weight_blob : current_channels
+        int ngroups = outCn / blobs[0].size[1]; // weight_blob : current_channels
 
         int inpCn = inputs[0][1];
         CV_Assert(inpCn % ngroups == 0 && outCn % ngroups == 0);
-        CV_Assert(blobs[0].size[0] == inpCn);
+        CV_Assert(blobs[0].size[0] == inpCn); // weight_blob : 'filters' value
 
         outputs.resize(1, outShape);
 

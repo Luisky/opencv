@@ -745,13 +745,13 @@ namespace cv {
                         cv::Mat weightsData_mat(1, filters, CV_32F);// scale
                         cv::Mat biasData_mat(1, filters, CV_32F);	// bias
 
-                        ifile.read(reinterpret_cast<char *>(biasData_mat.ptr<float>()), sizeof(float)*filters);
+                        /*ifile.read(reinterpret_cast<char *>(biasData_mat.ptr<float>()), sizeof(float)*filters);
                         if (use_batch_normalize) {
                             ifile.read(reinterpret_cast<char *>(weightsData_mat.ptr<float>()), sizeof(float)*filters);
                             ifile.read(reinterpret_cast<char *>(meanData_mat.ptr<float>()), sizeof(float)*filters);
                             ifile.read(reinterpret_cast<char *>(stdData_mat.ptr<float>()), sizeof(float)*filters);
                         }
-                        ifile.read(reinterpret_cast<char *>(weightsBlob.ptr<float>()), sizeof(float)*weights_size);
+                        ifile.read(reinterpret_cast<char *>(weightsBlob.ptr<float>()), sizeof(float)*weights_size);*/
 
                         // set convolutional weights
                         std::vector<cv::Mat> conv_blobs;

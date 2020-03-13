@@ -108,10 +108,10 @@ public:
             std::vector<String> netInputs(net.input_size());
             for (int inNum = 0; inNum < net.input_size(); inNum++)
             {
-                addedBlobs.push_back(BlobNote(net.input(inNum), 0, inNum));
-                netInputs[inNum] = net.input(inNum);
+                addedBlobs.push_back(BlobNote(net.input(inNum), 0, inNum)); // "data", 0, inNum{0, net.input_size()}
+                netInputs[inNum] = net.input(inNum); // "data"
             }
-            dstNet.setInputsNames(netInputs);
+            dstNet.setInputsNames(netInputs); // just sets outnames to data
         }
 
         for (int li = 0; li < layersSize; li++)

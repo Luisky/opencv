@@ -1118,6 +1118,13 @@ struct Net::Impl
     typedef std::map<int, LayerShapes> LayersShapesMap;
     typedef std::map<int, LayerData> MapIdToLayerData;
 
+    std::map<int,int> kernel_sizeIdMap;
+    std::map<int,int> filtersIdMap;
+    std::map<int,bool> use_batch_normalizeIdMap;
+    std::map<int,int> current_channelsIdMap;
+    std::istream *weightsFileStream;
+    bool streamMapsInitialized;
+
     Impl()
     {
         //allocate fake net input layer
@@ -1131,11 +1138,12 @@ struct Net::Impl
 
         lastLayerId = 0;
         netWasAllocated = false;
-        fusion = true;
+        fusion = false /* true */;
         isAsync = false;
         preferableBackend = DNN_BACKEND_DEFAULT;
         preferableTarget = DNN_TARGET_CPU;
         skipInfEngineInit = false;
+        streamMapsInitialized = false;
 
 #ifdef HAVE_CUDA
         if (cv::cuda::getCudaEnabledDeviceCount() > 0)
@@ -2792,6 +2800,52 @@ struct Net::Impl
         CV_TRACE_FUNCTION();
 
         Ptr<Layer> layer = ld.layerInstance;
+        std::cout << layer->type << std::endl;
+
+        //TODO: insert read here
+        if (!layer->type.compare("Convolution")) {
+            int filters = filtersIdMap[ld.id];
+            int current_channels = current_channelsIdMap[ld.id];
+            int kernel_size = kernel_sizeIdMap[ld.id];
+            bool use_batch_normalize = use_batch_normalizeIdMap[ld.id];
+
+            size_t const weights_size = filters * current_channels * kernel_size * kernel_size;
+            int sizes_weights[] = { filters, current_channels, kernel_size, kernel_size };
+            cv::Mat weightsBlob;
+            weightsBlob.create(4, sizes_weights, CV_32F);
+            CV_Assert(weightsBlob.isContinuous());
+
+            cv::Mat meanData_mat(1, filters, CV_32F);	// mean
+            cv::Mat stdData_mat(1, filters, CV_32F);	// variance
+            cv::Mat weightsData_mat(1, filters, CV_32F);// scale
+            cv::Mat biasData_mat(1, filters, CV_32F);	// bias
+
+            weightsFileStream->read(reinterpret_cast<char *>(biasData_mat.ptr<float>()), sizeof(float)*filters);
+            if (use_batch_normalize) {
+                weightsFileStream->read(reinterpret_cast<char *>(weightsData_mat.ptr<float>()), sizeof(float)*filters);
+                weightsFileStream->read(reinterpret_cast<char *>(meanData_mat.ptr<float>()), sizeof(float)*filters);
+                weightsFileStream->read(reinterpret_cast<char *>(stdData_mat.ptr<float>()), sizeof(float)*filters);
+            }
+            weightsFileStream->read(reinterpret_cast<char *>(weightsBlob.ptr<float>()), sizeof(float)*weights_size);
+
+            // set convolutional weights
+            layer->blobs.push_back(weightsBlob);
+            if (!use_batch_normalize) {
+                // use BIAS in any case
+                layer->blobs.push_back(biasData_mat);
+                ld.internals;
+            }
+            // set batch normalize (mean, variance, scale, bias)
+            if (use_batch_normalize) {
+                LayerData &batch_ld = getLayerData(ld.id+1);
+                Ptr<Layer> batch_layer = batch_ld.layerInstance;
+
+                batch_layer->blobs.push_back(meanData_mat);
+                batch_layer->blobs.push_back(stdData_mat);
+                batch_layer->blobs.push_back(weightsData_mat);
+                batch_layer->blobs.push_back(biasData_mat);
+            }
+        }
 
         TickMeter tm;
         tm.start();
@@ -3008,6 +3062,17 @@ struct Net::Impl
         layersTimings[ld.id] = tm.getTimeTicks();
 
         ld.flag = 1;
+
+        //TODO : deallocate here
+        layer->blobs.clear();
+        layer->blobs.shrink_to_fit();
+        
+        /*int blobs_size = layer->blobs.size();
+        for (int j = 0; j < blobs_size; j++)
+            layer->blobs[j].release(); // deallocate() or release()
+            
+        /*for (int j = 0; j < blobs_size; j++) 
+            layer->blobs.pop_back(); // vector is now empty*/
     }
 
     void forwardToLayer(LayerData &ld, bool clearFlags = true)
@@ -3607,6 +3672,105 @@ void Net::forward(OutputArrayOfArrays outputBlobs,
     std::vector<Mat> & outputvec = *(std::vector<Mat> *)outputBlobs.getObj();
     outputvec = matvec;
 }
+
+//TODO: deallocate blobs from the convolutionnal layers after setup
+void Net::forwardMod(OutputArrayOfArrays outputBlobs, 
+                     const std::vector<String>& outBlobNames, const String& weightsFile)
+{
+    CV_TRACE_FUNCTION();
+
+    std::vector<LayerPin> pins;
+    for (int i = 0; i < outBlobNames.size(); i++)
+    {
+        pins.push_back(impl->getPinByAlias(outBlobNames[i]));
+    }
+
+    impl->setUpNet(pins);
+
+    std::filebuf fb;
+    fb.open(weightsFile,std::ios::in); //error case { }
+    std::istream weightsFileStream(&fb);
+    impl->weightsFileStream = &weightsFileStream;
+    //int weightFileOffset = sizeof(int32_t) * 4 + sizeof(uint64_t); 
+    //weightsFileStream.seekg(weightFileOffset, weightsFileStream.beg); // move to first conv offset
+    int32_t major_ver, minor_ver, revision;
+    weightsFileStream.read(reinterpret_cast<char *>(&major_ver), sizeof(int32_t));
+    weightsFileStream.read(reinterpret_cast<char *>(&minor_ver), sizeof(int32_t));
+    weightsFileStream.read(reinterpret_cast<char *>(&revision), sizeof(int32_t));
+    uint64_t seen;
+    if ((major_ver * 10 + minor_ver) >= 2) {
+        weightsFileStream.read(reinterpret_cast<char *>(&seen), sizeof(uint64_t));
+    }
+    else {
+        int32_t iseen = 0;
+        weightsFileStream.read(reinterpret_cast<char *>(&iseen), sizeof(int32_t));
+        seen = iseen;
+    } // from darknet_io.cpp
+    
+    // for next iteration if there's one
+    if (!impl->streamMapsInitialized) {
+    // this will let me deallocate each blob of convolution and batchnorm
+    for (int i = 0; i < impl->lastLayerId; i++) {
+        Ptr<Layer> layer = impl->layers[i].layerInstance;
+        if (!layer->type.compare("Convolution")) {
+            // convolutional is 1 or 2 blobs & batchnorm is always 4
+            int blobs_size = layer->blobs.size();
+            bool use_batch_norm = (blobs_size == 1);
+
+            impl->filtersIdMap.insert(std::make_pair(i, layer->blobs[0].size[0]));
+            impl->current_channelsIdMap.insert(std::make_pair(i, layer->blobs[0].size[1]));
+            impl->kernel_sizeIdMap.insert(std::make_pair(i, layer->blobs[0].size[2]));
+            impl->use_batch_normalizeIdMap.insert(std::make_pair(i, use_batch_norm));
+
+            layer->blobs.clear();
+            layer->blobs.shrink_to_fit();
+
+            /*for (int j = 0; j < blobs_size; j++)
+                layer->blobs[j].release(); // deallocate() or release()
+            
+            /*for (int j = 0; j < blobs_size; j++) {
+                std::cout << "pop back before : " << j << std::endl;
+                layer->blobs.pop_back(); // vector is now empty   
+                std::cout << "pop back after : " << j << std::endl;
+            }*/
+
+            if(use_batch_norm) {
+                Ptr<Layer> batch_layer = impl->layers[i+1].layerInstance;
+                
+                int batch_blob_size = batch_layer->blobs.size();
+                CV_Assert(batch_layer->blobs.size() == 4);
+                impl->filtersIdMap.insert(std::make_pair(i, batch_layer->blobs[0].size[0]));
+
+                batch_layer->blobs.clear();
+                batch_layer->blobs.shrink_to_fit();
+
+                /*for (int j = 0; j < batch_blob_size; j++)
+                    batch_layer->blobs[j].release(); // deallocate() or release()
+
+                /*for (int j = 0; j < batch_blob_size; j++) 
+                    batch_layer->blobs.pop_back(); // vector is now empty  
+                    */
+            }      
+        }
+    }
+    impl->streamMapsInitialized = true;
+    }
+
+    LayerPin out = impl->getLatestLayerPin(pins);
+
+    impl->forwardToLayer(impl->getLayerData(out.lid));
+
+    std::vector<Mat> matvec;
+    for (int i = 0; i < pins.size(); i++)
+    {
+        matvec.push_back(impl->getBlob(pins[i]));
+    }
+
+    std::vector<Mat> & outputvec = *(std::vector<Mat> *)outputBlobs.getObj();
+    outputvec = matvec;
+
+    fb.close();
+}  
 
 void Net::forward(std::vector<std::vector<Mat> >& outputBlobs,
                      const std::vector<String>& outBlobNames)

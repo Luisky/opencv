@@ -524,6 +524,9 @@ CV__DNN_INLINE_NS_BEGIN
         CV_WRAP void forward(OutputArrayOfArrays outputBlobs,
                              const std::vector<String>& outBlobNames);
 
+        CV_WRAP void forwardMod(OutputArrayOfArrays outputBlobs,
+                             const std::vector<String>& outBlobNames, const String& weightsFile = String());
+
         /** @brief Runs forward pass to compute outputs of layers listed in @p outBlobNames.
          *  @param outputBlobs contains all output blobs for each layer specified in @p outBlobNames.
          *  @param outBlobNames names for layers which outputs are needed to get
